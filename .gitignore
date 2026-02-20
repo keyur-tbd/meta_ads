@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.env
+
+# Output files (don't commit these)
+*.xlsx
+*.csv
+*.log
