@@ -28,6 +28,7 @@ FIELDS = [
     "campaign_id", "campaign_name",
     "adset_id", "adset_name",
     "ad_id", "ad_name",
+    "objective",
     "impressions", "reach", "frequency",
     "clicks", "ctr", "cpc", "cpm", "spend",
     "actions", "action_values",
@@ -76,7 +77,40 @@ for account in AD_ACCOUNT_IDS:
 # ─────────────────────────────────────────────
 # FLATTEN
 # ─────────────────────────────────────────────
+# Maps Meta objective → the action_type Meta counts as the primary result
+OBJECTIVE_TO_RESULT_ACTION = {
+    "LINK_CLICKS":          "link_click",
+    "OUTCOME_TRAFFIC":      "link_click",
+    "OUTCOME_ENGAGEMENT":   "post_engagement",
+    "OUTCOME_AWARENESS":    "reach",
+    "OUTCOME_LEADS":        "lead",
+    "OUTCOME_SALES":        "offsite_conversion.fb_pixel_purchase",
+    "OUTCOME_APP_PROMOTION":"app_install",
+}
+
+def extract_result(row):
+    """Return the primary result value based on the campaign objective."""
+    objective = row.get("objective", "")
+    target_action = OBJECTIVE_TO_RESULT_ACTION.get(objective)
+    actions = row.get("actions") or []
+
+    if target_action:
+        for a in actions:
+            if a["action_type"] == target_action:
+                return a.get("value")
+        # Fallback: for OUTCOME_SALES try omni_purchase if pixel purchase not found
+        if objective == "OUTCOME_SALES":
+            for a in actions:
+                if a["action_type"] == "omni_purchase":
+                    return a.get("value")
+
+    # Generic fallback: return the first action value if objective unknown
+    if actions:
+        return actions[0].get("value")
+    return None
+
 def flatten(row):
+    row["result"] = extract_result(row)
     if row.get("actions"):
         for a in row["actions"]:
             row[a["action_type"]] = a.get("value")
