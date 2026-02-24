@@ -142,6 +142,28 @@ df.columns = [c.replace(".", "_") for c in df.columns]
 # ─────────────────────────────────────────────
 # UPSERT TO NEON
 # ─────────────────────────────────────────────
+from sqlalchemy import inspect
+
+def add_missing_columns(engine, table_name, df_columns):
+    """Add any missing columns to the table before inserting."""
+    inspector = inspect(engine)
+    if not inspector.has_table(table_name):
+        return  # Table doesn't exist yet, will be created
+    
+    existing_cols = {col['name'] for col in inspector.get_columns(table_name)}
+    missing_cols = set(df_columns) - existing_cols
+    
+    if missing_cols:
+        print(f"📊 Adding {len(missing_cols)} missing columns...")
+        with engine.begin() as conn:
+            for col in missing_cols:
+                try:
+                    sql = f'ALTER TABLE {table_name} ADD COLUMN "{col}" TEXT'
+                    conn.execute(text(sql))
+                    print(f"  ✓ {col}")
+                except Exception as e:
+                    print(f"  ✗ {col}: {e}")
+
 engine = create_engine(NEON_CONNECTION_STRING)
 
 # Step 1: Check if table exists (separate connection, no transaction risk)
@@ -154,7 +176,11 @@ with engine.connect() as conn:
     """), {"table": TABLE_NAME})
     table_exists = result.scalar()
 
-# Step 2a: Table exists — delete date window then insert fresh data
+# Step 2: Add missing columns if table exists
+if table_exists:
+    add_missing_columns(engine, TABLE_NAME, df.columns)
+
+# Step 3a: Table exists — delete date window then insert fresh data
 if table_exists:
     with engine.begin() as conn:
         conn.execute(
@@ -164,7 +190,7 @@ if table_exists:
         df.to_sql(TABLE_NAME, conn, if_exists="append", index=False)
     print(f"✅ {len(df)} rows upserted into '{TABLE_NAME}'")
 
-# Step 2b: Table doesn't exist — create and insert
+# Step 3b: Table doesn't exist — create and insert
 else:
     with engine.begin() as conn:
         df.to_sql(TABLE_NAME, conn, if_exists="replace", index=False)
