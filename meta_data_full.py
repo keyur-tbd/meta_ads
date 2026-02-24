@@ -20,7 +20,7 @@ AD_ACCOUNT_IDS = [
 ]
 
 END_DATE   = datetime.today().strftime("%Y-%m-%d")
-START_DATE = "2026-01-01"  # Changed to YYYY-MM-DD format
+START_DATE = "2026-01-01"
 
 TABLE_NAME = "meta_ads_summary"
 
@@ -74,10 +74,12 @@ for account in AD_ACCOUNT_IDS:
         else:
             break
 
+print(f"\n📊 Total rows fetched: {len(all_data)}")
+
 # ─────────────────────────────────────────────
 # FLATTEN
 # ─────────────────────────────────────────────
-# Maps Meta objective → the action_type Meta counts as the primary result
+# Enhanced objective mapping with more objectives
 OBJECTIVE_TO_RESULT_ACTION = {
     "LINK_CLICKS":          "link_click",
     "OUTCOME_TRAFFIC":      "link_click",
@@ -86,6 +88,16 @@ OBJECTIVE_TO_RESULT_ACTION = {
     "OUTCOME_LEADS":        "lead",
     "OUTCOME_SALES":        "offsite_conversion.fb_pixel_purchase",
     "OUTCOME_APP_PROMOTION":"app_install",
+    "POST_ENGAGEMENT":      "post_engagement",
+    "PAGE_LIKES":           "like",
+    "EVENT_RESPONSES":      "event_response",
+    "MESSAGES":             "onsite_conversion.messaging_conversation_started_7d",
+    "CONVERSIONS":          "offsite_conversion.fb_pixel_purchase",
+    "CATALOG_SALES":        "offsite_conversion.fb_pixel_purchase",
+    "STORE_VISITS":         "omni_store_visit",
+    "REACH":                "reach",
+    "BRAND_AWARENESS":      "reach",
+    "VIDEO_VIEWS":          "video_view",
 }
 
 def extract_result(row):
@@ -94,38 +106,73 @@ def extract_result(row):
     target_action = OBJECTIVE_TO_RESULT_ACTION.get(objective)
     actions = row.get("actions") or []
 
+    # Try to find the exact target action
     if target_action:
         for a in actions:
             if a["action_type"] == target_action:
-                return a.get("value")
-        # Fallback: for OUTCOME_SALES try omni_purchase if pixel purchase not found
-        if objective == "OUTCOME_SALES":
+                value = a.get("value")
+                try:
+                    return float(value) if value else 0
+                except (ValueError, TypeError):
+                    return 0
+        
+        # Fallback: for sales objectives, try omni_purchase
+        if objective in ["OUTCOME_SALES", "CONVERSIONS", "CATALOG_SALES"]:
             for a in actions:
                 if a["action_type"] == "omni_purchase":
-                    return a.get("value")
+                    value = a.get("value")
+                    try:
+                        return float(value) if value else 0
+                    except (ValueError, TypeError):
+                        return 0
+
+    # Special case: if objective is OUTCOME_AWARENESS, use reach from main metrics
+    if objective in ["OUTCOME_AWARENESS", "REACH", "BRAND_AWARENESS"]:
+        reach = row.get("reach")
+        try:
+            return float(reach) if reach else 0
+        except (ValueError, TypeError):
+            return 0
 
     # Generic fallback: return the first action value if objective unknown
     if actions:
-        return actions[0].get("value")
-    return None
+        value = actions[0].get("value")
+        try:
+            return float(value) if value else 0
+        except (ValueError, TypeError):
+            return 0
+    
+    return 0  # Default to 0 if no result found
 
 def flatten(row):
+    # Extract the result first
     row["result"] = extract_result(row)
+    
+    # Flatten actions
     if row.get("actions"):
         for a in row["actions"]:
             row[a["action_type"]] = a.get("value")
+    
+    # Flatten action values
     if row.get("action_values"):
         for a in row["action_values"]:
             row[a["action_type"] + "_value"] = a.get("value")
+    
+    # Flatten purchase ROAS
     if row.get("purchase_roas"):
         for r in row["purchase_roas"]:
             row["purchase_roas"] = r.get("value")
+    
+    # Flatten cost per action
     if row.get("cost_per_action_type"):
         for c in row["cost_per_action_type"]:
             row["cost_per_" + c["action_type"]] = c.get("value")
+    
     return row
 
 processed = [flatten(r) for r in all_data]
+
+# Clean up nested structures
 for r in processed:
     r.pop("actions", None)
     r.pop("action_values", None)
@@ -134,10 +181,23 @@ for r in processed:
 df = pd.DataFrame(processed)
 
 if df.empty:
-    print("No data returned. Exiting.")
+    print("❌ No data returned. Exiting.")
     exit()
 
+# Clean column names
 df.columns = [c.replace(".", "_") for c in df.columns]
+
+# Verify result column exists and show stats
+if 'result' in df.columns:
+    print(f"✅ Result column created successfully")
+    print(f"   - Non-zero results: {(df['result'] != 0).sum()}")
+    print(f"   - Total result value: {df['result'].astype(float).sum():.2f}")
+    print(f"   - Sample results: {df['result'].head(10).tolist()}")
+else:
+    print("⚠️  Warning: Result column not found in dataframe")
+
+# Show unique objectives
+print(f"\n📋 Unique objectives found: {df['objective'].unique().tolist()}")
 
 # ─────────────────────────────────────────────
 # UPSERT TO NEON
@@ -166,7 +226,7 @@ def add_missing_columns(engine, table_name, df_columns):
 
 engine = create_engine(NEON_CONNECTION_STRING)
 
-# Step 1: Check if table exists (separate connection, no transaction risk)
+# Check if table exists
 with engine.connect() as conn:
     result = conn.execute(text("""
         SELECT EXISTS (
@@ -176,11 +236,11 @@ with engine.connect() as conn:
     """), {"table": TABLE_NAME})
     table_exists = result.scalar()
 
-# Step 2: Add missing columns if table exists
+# Add missing columns if table exists
 if table_exists:
     add_missing_columns(engine, TABLE_NAME, df.columns)
 
-# Step 3a: Table exists — delete date window then insert fresh data
+# Upsert data
 if table_exists:
     with engine.begin() as conn:
         conn.execute(
@@ -188,10 +248,8 @@ if table_exists:
             {"start": START_DATE, "end": END_DATE}
         )
         df.to_sql(TABLE_NAME, conn, if_exists="append", index=False)
-    print(f"✅ {len(df)} rows upserted into '{TABLE_NAME}'")
-
-# Step 3b: Table doesn't exist — create and insert
+    print(f"\n✅ {len(df)} rows upserted into '{TABLE_NAME}'")
 else:
     with engine.begin() as conn:
         df.to_sql(TABLE_NAME, conn, if_exists="replace", index=False)
-    print(f"✅ Table '{TABLE_NAME}' created with {len(df)} rows")
+    print(f"\n✅ Table '{TABLE_NAME}' created with {len(df)} rows")
