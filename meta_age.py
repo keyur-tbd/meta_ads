@@ -19,7 +19,7 @@ AD_ACCOUNT_IDS = [
     "act_1447779473228664"
 ]
 
-END_DATE   = "01-01-2026"
+END_DATE   = datetime.today().strftime("%Y-%m-%d")
 START_DATE = (datetime.today() - timedelta(days=3)).strftime("%Y-%m-%d")
 
 TABLE_NAME = "meta_ads_age_gender"
