@@ -77,72 +77,104 @@ for account in AD_ACCOUNT_IDS:
 print(f"\n📊 Total rows fetched: {len(all_data)}")
 
 # ─────────────────────────────────────────────
-# FLATTEN
+# FLATTEN - FIXED VERSION
 # ─────────────────────────────────────────────
-# Enhanced objective mapping with more objectives
-OBJECTIVE_TO_RESULT_ACTION = {
-    "LINK_CLICKS":          "link_click",
-    "OUTCOME_TRAFFIC":      "link_click",
-    "OUTCOME_ENGAGEMENT":   "post_engagement",
-    "OUTCOME_AWARENESS":    "reach",
-    "OUTCOME_LEADS":        "lead",
-    "OUTCOME_SALES":        "offsite_conversion.fb_pixel_purchase",
-    "OUTCOME_APP_PROMOTION":"app_install",
-    "POST_ENGAGEMENT":      "post_engagement",
-    "PAGE_LIKES":           "like",
-    "EVENT_RESPONSES":      "event_response",
-    "MESSAGES":             "onsite_conversion.messaging_conversation_started_7d",
-    "CONVERSIONS":          "offsite_conversion.fb_pixel_purchase",
-    "CATALOG_SALES":        "offsite_conversion.fb_pixel_purchase",
-    "STORE_VISITS":         "omni_store_visit",
-    "REACH":                "reach",
-    "BRAND_AWARENESS":      "reach",
-    "VIDEO_VIEWS":          "video_view",
+
+# CORRECTED: More comprehensive objective mapping with multiple fallbacks per objective
+OBJECTIVE_TO_RESULT_ACTIONS = {
+    # Sales objectives - try multiple purchase action types in order of preference
+    "OUTCOME_SALES": [
+        "omni_purchase",
+        "offsite_conversion.fb_pixel_purchase", 
+        "purchase",
+        "onsite_web_purchase",
+        "onsite_web_app_purchase",
+        "web_in_store_purchase"
+    ],
+    "CONVERSIONS": [
+        "omni_purchase",
+        "offsite_conversion.fb_pixel_purchase",
+        "purchase"
+    ],
+    "CATALOG_SALES": [
+        "omni_purchase",
+        "offsite_conversion.fb_pixel_purchase"
+    ],
+    
+    # Traffic objectives
+    "LINK_CLICKS": ["link_click"],
+    "OUTCOME_TRAFFIC": ["link_click"],
+    
+    # Engagement objectives
+    "OUTCOME_ENGAGEMENT": ["post_engagement", "page_engagement"],
+    "POST_ENGAGEMENT": ["post_engagement"],
+    
+    # Lead objectives
+    "OUTCOME_LEADS": [
+        "lead",
+        "offsite_conversion.fb_pixel_lead",
+        "onsite_conversion.lead_grouped"
+    ],
+    
+    # Awareness objectives (special case - uses reach from main metrics, not actions)
+    "OUTCOME_AWARENESS": [],
+    "REACH": [],
+    "BRAND_AWARENESS": [],
+    
+    # App promotion
+    "OUTCOME_APP_PROMOTION": ["app_install", "mobile_app_install"],
+    
+    # Messaging
+    "MESSAGES": [
+        "onsite_conversion.messaging_conversation_started_7d",
+        "onsite_conversion.messaging_first_reply"
+    ],
+    
+    # Other objectives
+    "PAGE_LIKES": ["like"],
+    "EVENT_RESPONSES": ["event_response"],
+    "STORE_VISITS": ["omni_store_visit"],
+    "VIDEO_VIEWS": ["video_view"],
 }
 
 def extract_result(row):
-    """Return the primary result value based on the campaign objective."""
+    """
+    Return the primary result value based on the campaign objective.
+    
+    FIXED: This function now:
+    1. Tries MULTIPLE action types for each objective (not just one)
+    2. Returns 0 (not the first random action) if target actions aren't found
+    3. Properly handles awareness objectives using reach
+    4. Never falls back to random actions for sales campaigns
+    """
     objective = row.get("objective", "")
-    target_action = OBJECTIVE_TO_RESULT_ACTION.get(objective)
     actions = row.get("actions") or []
-
-    # Try to find the exact target action
-    if target_action:
-        for a in actions:
-            if a["action_type"] == target_action:
-                value = a.get("value")
-                try:
-                    return float(value) if value else 0
-                except (ValueError, TypeError):
-                    return 0
-        
-        # Fallback: for sales objectives, try omni_purchase
-        if objective in ["OUTCOME_SALES", "CONVERSIONS", "CATALOG_SALES"]:
-            for a in actions:
-                if a["action_type"] == "omni_purchase":
-                    value = a.get("value")
-                    try:
-                        return float(value) if value else 0
-                    except (ValueError, TypeError):
-                        return 0
-
-    # Special case: if objective is OUTCOME_AWARENESS, use reach from main metrics
+    
+    # Special case: AWARENESS objectives use reach from main metrics (not actions)
     if objective in ["OUTCOME_AWARENESS", "REACH", "BRAND_AWARENESS"]:
         reach = row.get("reach")
         try:
             return float(reach) if reach else 0
         except (ValueError, TypeError):
             return 0
-
-    # Generic fallback: return the first action value if objective unknown
-    if actions:
-        value = actions[0].get("value")
-        try:
-            return float(value) if value else 0
-        except (ValueError, TypeError):
-            return 0
     
-    return 0  # Default to 0 if no result found
+    # Get the list of possible action types for this objective
+    target_actions = OBJECTIVE_TO_RESULT_ACTIONS.get(objective, [])
+    
+    # Try each target action type in order of preference
+    for target_action in target_actions:
+        for action in actions:
+            if action["action_type"] == target_action:
+                value = action.get("value")
+                try:
+                    return float(value) if value else 0
+                except (ValueError, TypeError):
+                    return 0
+    
+    # CRITICAL FIX: If we didn't find any of the target actions, return 0
+    # DO NOT fall back to returning the first action - that's what caused the bug!
+    # For sales campaigns without purchase data, result should be 0, not link_click
+    return 0
 
 def safe_float(value):
     """Safely convert value to float."""
@@ -155,13 +187,13 @@ def flatten(row):
     # Extract the result first
     row["result"] = extract_result(row)
     
-    # Flatten actions - FIXED: properly handle action types
+    # Flatten actions - properly handle action types
     if row.get("actions"):
         for a in row["actions"]:
             action_type = a["action_type"].replace(".", "_")  # Replace dots with underscores
             row[action_type] = a.get("value")
     
-    # Flatten action values - FIXED: properly handle value types and naming
+    # Flatten action values - properly handle value types and naming
     if row.get("action_values"):
         for a in row["action_values"]:
             action_type = a["action_type"].replace(".", "_")  # Replace dots with underscores
@@ -232,7 +264,9 @@ def calculate_roas(row):
 
 df['calculated_roas'] = df.apply(calculate_roas, axis=1)
 
-# Verify result column exists and show stats
+# ─────────────────────────────────────────────
+# DATA QUALITY CHECKS - ENHANCED
+# ─────────────────────────────────────────────
 print("\n" + "="*60)
 print("DATA QUALITY CHECKS")
 print("="*60)
@@ -241,18 +275,33 @@ if 'result' in df.columns:
     print(f"✅ Result column created successfully")
     print(f"   - Non-zero results: {(df['result'] != 0).sum()}")
     print(f"   - Total result value: {df['result'].astype(float).sum():.2f}")
+    
+    # NEW: Check if result matches link_click (the original bug!)
+    if 'link_click' in df.columns:
+        result_sum = df['result'].astype(float).sum()
+        link_click_sum = pd.to_numeric(df['link_click'], errors='coerce').fillna(0).sum()
+        
+        if abs(result_sum - link_click_sum) < 0.01:  # Account for floating point precision
+            print(f"\n⚠️  WARNING: Result sum ({result_sum:.0f}) equals link_click sum ({link_click_sum:.0f})")
+            print(f"   This suggests the bug may still exist!")
+            print(f"   For OUTCOME_SALES campaigns, result should be purchases, not link_clicks.")
+        else:
+            print(f"\n✅ Result sum ({result_sum:.0f}) differs from link_click sum ({link_click_sum:.0f})")
+            print(f"   This is correct for OUTCOME_SALES campaigns.")
 
 # Show purchase value stats
 print(f"\n💰 Purchase Value Analysis:")
 print(f"   - Rows with purchase value: {(df['total_purchase_value'] > 0).sum()}")
 print(f"   - Total purchase value: ${df['total_purchase_value'].sum():.2f}")
-print(f"   - Average purchase value (non-zero): ${df[df['total_purchase_value'] > 0]['total_purchase_value'].mean():.2f}")
+if (df['total_purchase_value'] > 0).sum() > 0:
+    print(f"   - Average purchase value (non-zero): ${df[df['total_purchase_value'] > 0]['total_purchase_value'].mean():.2f}")
 
 # Show ROAS stats
 print(f"\n📈 ROAS Analysis:")
 print(f"   - Rows with ROAS > 0: {(df['calculated_roas'] > 0).sum()}")
-print(f"   - Average ROAS (non-zero): {df[df['calculated_roas'] > 0]['calculated_roas'].mean():.2f}x")
-print(f"   - Max ROAS: {df['calculated_roas'].max():.2f}x")
+if (df['calculated_roas'] > 0).sum() > 0:
+    print(f"   - Average ROAS (non-zero): {df[df['calculated_roas'] > 0]['calculated_roas'].mean():.2f}x")
+    print(f"   - Max ROAS: {df['calculated_roas'].max():.2f}x")
 
 # Show spend stats
 print(f"\n💵 Spend Analysis:")
@@ -270,6 +319,14 @@ for col in purchase_value_columns:
 
 # Show unique objectives
 print(f"\n📋 Unique objectives found: {df['objective'].unique().tolist()}")
+
+# NEW: Show result breakdown by objective
+print(f"\n📊 Result Breakdown by Objective:")
+for objective in df['objective'].unique():
+    obj_df = df[df['objective'] == objective]
+    result_sum = obj_df['result'].astype(float).sum()
+    row_count = len(obj_df)
+    print(f"   {objective}: {result_sum:.0f} results across {row_count} rows")
 
 print("\n" + "="*60)
 
@@ -329,4 +386,5 @@ else:
     print(f"\n✅ Table '{TABLE_NAME}' created with {len(df)} rows")
 
 print(f"\n🎉 Script completed successfully!")
-print(f"   - New columns: 'total_purchase_value' and 'calculated_roas'")
+print(f"   - Columns: 'result', 'total_purchase_value', 'calculated_roas'")
+print(f"\n⚠️  IMPORTANT: Re-run this script to fix historical data with correct result values!")
