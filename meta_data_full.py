@@ -144,19 +144,28 @@ def extract_result(row):
     
     return 0  # Default to 0 if no result found
 
+def safe_float(value):
+    """Safely convert value to float."""
+    try:
+        return float(value) if value else 0
+    except (ValueError, TypeError):
+        return 0
+
 def flatten(row):
     # Extract the result first
     row["result"] = extract_result(row)
     
-    # Flatten actions
+    # Flatten actions - FIXED: properly handle action types
     if row.get("actions"):
         for a in row["actions"]:
-            row[a["action_type"]] = a.get("value")
+            action_type = a["action_type"].replace(".", "_")  # Replace dots with underscores
+            row[action_type] = a.get("value")
     
-    # Flatten action values
+    # Flatten action values - FIXED: properly handle value types and naming
     if row.get("action_values"):
         for a in row["action_values"]:
-            row[a["action_type"] + "_value"] = a.get("value")
+            action_type = a["action_type"].replace(".", "_")  # Replace dots with underscores
+            row[action_type + "_value"] = a.get("value")
     
     # Flatten purchase ROAS
     if row.get("purchase_roas"):
@@ -166,7 +175,8 @@ def flatten(row):
     # Flatten cost per action
     if row.get("cost_per_action_type"):
         for c in row["cost_per_action_type"]:
-            row["cost_per_" + c["action_type"]] = c.get("value")
+            action_type = c["action_type"].replace(".", "_")  # Replace dots with underscores
+            row["cost_per_" + action_type] = c.get("value")
     
     return row
 
@@ -184,20 +194,84 @@ if df.empty:
     print("❌ No data returned. Exiting.")
     exit()
 
-# Clean column names
+# Clean column names - already handled in flatten, but ensure consistency
 df.columns = [c.replace(".", "_") for c in df.columns]
 
+# ─────────────────────────────────────────────
+# CALCULATE TOTAL PURCHASE VALUE & ROAS
+# ─────────────────────────────────────────────
+# List of all possible purchase value columns from Meta Ads
+purchase_value_columns = [
+    'offsite_conversion_fb_pixel_purchase_value',
+    'omni_purchase_value',
+    'onsite_web_purchase_value',
+    'onsite_web_app_purchase_value',
+    'web_in_store_purchase_value',
+    'web_app_in_store_purchase_value',
+    'purchase_value'
+]
+
+# Create total_purchase_value column by summing all purchase value sources
+def calculate_total_purchase_value(row):
+    total = 0
+    for col in purchase_value_columns:
+        if col in row and pd.notna(row[col]):
+            total += safe_float(row[col])
+    return total
+
+df['total_purchase_value'] = df.apply(calculate_total_purchase_value, axis=1)
+
+# Calculate ROAS (Return on Ad Spend)
+def calculate_roas(row):
+    spend = safe_float(row.get('spend', 0))
+    purchase_value = safe_float(row.get('total_purchase_value', 0))
+    
+    if spend > 0 and purchase_value > 0:
+        return purchase_value / spend
+    return 0
+
+df['calculated_roas'] = df.apply(calculate_roas, axis=1)
+
 # Verify result column exists and show stats
+print("\n" + "="*60)
+print("DATA QUALITY CHECKS")
+print("="*60)
+
 if 'result' in df.columns:
     print(f"✅ Result column created successfully")
     print(f"   - Non-zero results: {(df['result'] != 0).sum()}")
     print(f"   - Total result value: {df['result'].astype(float).sum():.2f}")
-    print(f"   - Sample results: {df['result'].head(10).tolist()}")
-else:
-    print("⚠️  Warning: Result column not found in dataframe")
+
+# Show purchase value stats
+print(f"\n💰 Purchase Value Analysis:")
+print(f"   - Rows with purchase value: {(df['total_purchase_value'] > 0).sum()}")
+print(f"   - Total purchase value: ${df['total_purchase_value'].sum():.2f}")
+print(f"   - Average purchase value (non-zero): ${df[df['total_purchase_value'] > 0]['total_purchase_value'].mean():.2f}")
+
+# Show ROAS stats
+print(f"\n📈 ROAS Analysis:")
+print(f"   - Rows with ROAS > 0: {(df['calculated_roas'] > 0).sum()}")
+print(f"   - Average ROAS (non-zero): {df[df['calculated_roas'] > 0]['calculated_roas'].mean():.2f}x")
+print(f"   - Max ROAS: {df['calculated_roas'].max():.2f}x")
+
+# Show spend stats
+print(f"\n💵 Spend Analysis:")
+print(f"   - Total spend: ${df['spend'].astype(float).sum():.2f}")
+print(f"   - Rows with spend: {(df['spend'].astype(float) > 0).sum()}")
+
+# Show which purchase value columns have data
+print(f"\n📊 Purchase Value Columns with Data:")
+for col in purchase_value_columns:
+    if col in df.columns:
+        count = (pd.to_numeric(df[col], errors='coerce') > 0).sum()
+        total = pd.to_numeric(df[col], errors='coerce').sum()
+        if count > 0:
+            print(f"   ✓ {col}: {count} rows, ${total:.2f}")
 
 # Show unique objectives
 print(f"\n📋 Unique objectives found: {df['objective'].unique().tolist()}")
+
+print("\n" + "="*60)
 
 # ─────────────────────────────────────────────
 # UPSERT TO NEON
@@ -253,3 +327,6 @@ else:
     with engine.begin() as conn:
         df.to_sql(TABLE_NAME, conn, if_exists="replace", index=False)
     print(f"\n✅ Table '{TABLE_NAME}' created with {len(df)} rows")
+
+print(f"\n🎉 Script completed successfully!")
+print(f"   - New columns: 'total_purchase_value' and 'calculated_roas'")
