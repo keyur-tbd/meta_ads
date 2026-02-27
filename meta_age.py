@@ -42,19 +42,6 @@ FIELDS = [
     "catalog_segment_value_mobile_purchase_roas",
     "catalog_segment_value_omni_purchase_roas",
     "catalog_segment_value_website_purchase_roas",
-    # Explicit catalog fields — Meta does not return catalog_segment_value
-    # reliably when breakdowns (age/gender) are applied, so we request
-    # these individually to ensure catalog purchase values are captured
-    "omni_purchase_catalog",
-    "omni_purchase_catalog_value",
-    "purchase_catalog",
-    "purchase_catalog_value",
-    "offsite_conversion_fb_pixel_purchase_catalog",
-    "offsite_conversion_fb_pixel_purchase_catalog_value",
-    "onsite_app_purchase_catalog",
-    "onsite_app_purchase_catalog_value",
-    "app_custom_event_fb_mobile_purchase_catalog",
-    "app_custom_event_fb_mobile_purchase_catalog_value",
 ]
 
 # ─────────────────────────────────────────────
@@ -323,13 +310,8 @@ purchase_value_columns = [
     "web_in_store_purchase_value",
     "web_app_in_store_purchase_value",
     "purchase_value",
-    # Catalog purchase values — requested explicitly since breakdown calls
-    # suppress catalog_segment_value in the API response
+    # Catalog purchase values — flattened from catalog_segment_value by the flatten() function
     "omni_purchase_catalog_value",
-    "purchase_catalog_value",
-    "offsite_conversion_fb_pixel_purchase_catalog_value",
-    "onsite_app_purchase_catalog_value",
-    "app_custom_event_fb_mobile_purchase_catalog_value",
 ]
 
 def calculate_total_purchase_value(row):
