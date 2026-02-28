@@ -20,7 +20,7 @@ AD_ACCOUNT_IDS = [
 ]
 
 END_DATE   = datetime.today().strftime("%Y-%m-%d")
-START_DATE = "2025-10-01"
+START_DATE = (datetime.today() - timedelta(days=7)).strftime("%Y-%m-%d")
 
 TABLE_NAME = "meta_ads_region"
 
