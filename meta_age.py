@@ -2,7 +2,7 @@ import os
 import requests
 import pandas as pd
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text, inspect
 
 
