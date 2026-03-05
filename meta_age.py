@@ -69,7 +69,16 @@ def create_async_job(account):
         "limit": 500,
     }
     response = requests.post(url, params=params)
-    data = response.json()
+
+    if not response.content:
+        print(f"  ❌ Empty response from API (HTTP {response.status_code})")
+        return None
+
+    try:
+        data = response.json()
+    except requests.exceptions.JSONDecodeError:
+        print(f"  ❌ Non-JSON response (HTTP {response.status_code}): {response.text[:200]!r}")
+        return None
 
     if "report_run_id" in data:
         job_id = data["report_run_id"]
@@ -97,7 +106,26 @@ def poll_job(job_id, timeout_minutes=30):
             return False
 
         response = requests.get(url, params=params)
-        data = response.json()
+
+        # Guard against empty or non-JSON responses (rate limits, transient errors, etc.)
+        if not response.content:
+            print(f"  ⚠️  Empty response (HTTP {response.status_code}) — retrying in {poll_interval}s…")
+            time.sleep(poll_interval)
+            poll_interval = min(poll_interval + 5, 30)
+            continue
+
+        try:
+            data = response.json()
+        except requests.exceptions.JSONDecodeError:
+            print(f"  ⚠️  Non-JSON response (HTTP {response.status_code}): {response.text[:200]!r} — retrying…")
+            time.sleep(poll_interval)
+            poll_interval = min(poll_interval + 5, 30)
+            continue
+
+        if "error" in data:
+            err = data["error"]
+            print(f"  ❌ API error: {err.get('message', err)}")
+            return False
 
         status = data.get("async_status", "unknown")
         pct    = data.get("async_percent_completion", 0)
@@ -130,7 +158,16 @@ def fetch_job_results(job_id):
 
     while True:
         response = requests.get(url, params=params)
-        data = response.json()
+
+        if not response.content:
+            print(f"  ❌ Empty response (HTTP {response.status_code})")
+            break
+
+        try:
+            data = response.json()
+        except requests.exceptions.JSONDecodeError:
+            print(f"  ❌ Non-JSON response (HTTP {response.status_code}): {response.text[:200]!r}")
+            break
 
         if "data" not in data:
             print(f"  ❌ Error fetching results: {data}")
