@@ -64,6 +64,8 @@ def create_async_job(account):
         "time_increment": 1,
         "fields": ",".join(FIELDS),
         "time_range": f'{{"since":"{START_DATE}","until":"{END_DATE}"}}',
+        "action_attribution_windows": "7d_click,1d_view",
+        "action_report_time": "conversion",
         "access_token": ACCESS_TOKEN,
         "limit": 500,
     }
