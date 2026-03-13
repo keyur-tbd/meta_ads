@@ -55,7 +55,7 @@ def safe_float(value):
 
 
 # ─────────────────────────────────────────────
-# ASYNC JOB: CREATE
+# ASYNC JOB: CREATE (Ad-level insights)
 # ─────────────────────────────────────────────
 def create_async_job(account):
     url = f"https://graph.facebook.com/v18.0/{account}/insights"
@@ -152,6 +152,135 @@ def fetch_job_results(job_id):
 
 
 # ─────────────────────────────────────────────
+# ORPHAN PURCHASE FETCH
+# Fetches account-level daily purchase values
+# including days when no ads were actively running.
+# This captures delayed conversions attributed to
+# paused/stopped campaigns via the conversion window.
+# ─────────────────────────────────────────────
+PIXEL_PURCHASE_FIELDS = [
+    "ad_id", "ad_name",
+    "adset_id", "adset_name",
+    "campaign_id", "campaign_name",
+    "actions", "action_values",
+    "date_start", "date_stop",
+]
+
+def create_orphan_purchase_job(account):
+    """
+    Creates an async insights job at the AD level but with
+    action_report_time=conversion and NO spend/impression filter.
+    This returns rows for ads that received 0 spend but still had
+    purchase conversions attributed to them on a given day.
+    """
+    url = f"https://graph.facebook.com/v18.0/{account}/insights"
+    params = {
+        "level": "ad",
+        "time_increment": 1,
+        "fields": ",".join(PIXEL_PURCHASE_FIELDS),
+        "time_range": f'{{"since":"{START_DATE}","until":"{END_DATE}"}}',
+        "action_attribution_windows": "7d_click,1d_view",
+        "action_report_time": "conversion",
+        # Key difference: filter to only rows that have purchase action values
+        # but no spend constraint — Meta will return these "zero-spend" rows
+        "filtering": '[{"field":"action_values","operator":"GREATER_THAN","value":0}]',
+        "access_token": ACCESS_TOKEN,
+        "limit": 500,
+    }
+    response = requests.post(url, params=params)
+    data = response.json()
+
+    if "report_run_id" in data:
+        job_id = data["report_run_id"]
+        print(f"  ✅ Orphan purchase job created: {job_id}")
+        return job_id
+    else:
+        print(f"  ⚠️  Could not create orphan job for {account}: {data}")
+        return None
+
+
+def fetch_orphan_purchases(account):
+    """
+    Directly queries (synchronously) per-day purchase action_values
+    at the account level. Used as a fallback/supplement to capture
+    purchase value on days when campaigns had zero impressions/spend.
+
+    Returns a dict: { (ad_id, date_start) -> purchase_value }
+    """
+    print(f"\n  🔍 Fetching orphan purchases for {account}…")
+
+    url = f"https://graph.facebook.com/v18.0/{account}/insights"
+    params = {
+        "level": "ad",
+        "time_increment": 1,
+        "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,actions,action_values,spend,impressions,date_start,date_stop",
+        "time_range": f'{{"since":"{START_DATE}","until":"{END_DATE}"}}',
+        "action_attribution_windows": "7d_click,1d_view",
+        "action_report_time": "conversion",
+        "access_token": ACCESS_TOKEN,
+        "limit": 500,
+    }
+
+    orphan_rows = []
+    page = 0
+
+    while True:
+        response = requests.get(url, params=params)
+        data = response.json()
+
+        if "data" not in data:
+            print(f"  ⚠️  Orphan fetch error for {account}: {data}")
+            break
+
+        for row in data["data"]:
+            spend = safe_float(row.get("spend", 0))
+            impressions = safe_float(row.get("impressions", 0))
+
+            # We only care about rows where there was NO active delivery
+            # but there IS some action_value (purchase value)
+            if spend == 0 and impressions == 0:
+                purchase_value = _extract_purchase_value_from_actions(row.get("action_values", []))
+                if purchase_value > 0:
+                    row["_orphan_purchase_value"] = purchase_value
+                    row["account_id"] = account
+                    orphan_rows.append(row)
+
+        page += 1
+        print(f"    Page {page}: {len(data['data'])} rows scanned | Orphan rows found so far: {len(orphan_rows)}")
+
+        if "paging" in data and "next" in data["paging"]:
+            url = data["paging"]["next"]
+            params = {}
+            time.sleep(1)
+        else:
+            break
+
+    print(f"  ✅ {len(orphan_rows)} orphan rows (purchase value with zero spend/impressions)")
+    return orphan_rows
+
+
+def _extract_purchase_value_from_actions(action_values_list):
+    """
+    Given a list like [{"action_type": "offsite_conversion.fb_pixel_purchase", "value": "1234.56"}, ...]
+    returns the total purchase value across all purchase-related action types.
+    """
+    purchase_action_types = {
+        "offsite_conversion.fb_pixel_purchase",
+        "omni_purchase",
+        "onsite_web_purchase",
+        "onsite_web_app_purchase",
+        "web_in_store_purchase",
+        "web_app_in_store_purchase",
+        "purchase",
+    }
+    total = 0.0
+    for item in (action_values_list or []):
+        if item.get("action_type") in purchase_action_types:
+            total += safe_float(item.get("value", 0))
+    return total
+
+
+# ─────────────────────────────────────────────
 # MAIN FETCH LOOP
 # ─────────────────────────────────────────────
 all_data = []
@@ -196,7 +325,38 @@ for account, job_id in completed_jobs.items():
     all_data.extend(rows)
     print(f"  ✅ {len(rows)} rows fetched")
 
-print(f"\n📊 Total rows fetched: {len(all_data)}")
+print(f"\n📊 Total rows from active-day jobs: {len(all_data)}")
+
+# Step 4: Fetch orphan purchase rows (zero-spend days with purchase value)
+print(f"\n{'=' * 60}")
+print("STEP 4: Fetching orphan purchases (inactive days with purchase value)")
+print("=" * 60)
+
+orphan_data = []
+for account in AD_ACCOUNT_IDS:
+    orphan_rows = fetch_orphan_purchases(account)
+    orphan_data.extend(orphan_rows)
+
+print(f"\n📊 Total orphan rows: {len(orphan_data)}")
+
+# Merge: build a set of (ad_id, date_start) already in all_data to avoid duplicates
+existing_keys = set()
+for row in all_data:
+    ad_id = row.get("ad_id", "")
+    date  = row.get("date_start", "")
+    if ad_id and date:
+        existing_keys.add((ad_id, date))
+
+new_orphans_added = 0
+for row in orphan_data:
+    key = (row.get("ad_id", ""), row.get("date_start", ""))
+    if key not in existing_keys:
+        all_data.append(row)
+        existing_keys.add(key)
+        new_orphans_added += 1
+
+print(f"✅ {new_orphans_added} new orphan rows merged (non-duplicate)")
+print(f"📊 Grand total rows: {len(all_data)}")
 
 if not all_data:
     print("❌ No data returned. Exiting.")
@@ -330,6 +490,12 @@ purchase_value_columns = [
 ]
 
 def calculate_total_purchase_value(row):
+    # Prefer the pre-computed _orphan_purchase_value for orphan rows
+    # (already extracted from action_values before flattening)
+    orphan_val = safe_float(row.get("_orphan_purchase_value", 0))
+    if orphan_val > 0:
+        return orphan_val
+
     return sum(
         safe_float(row[col])
         for col in purchase_value_columns
@@ -338,12 +504,23 @@ def calculate_total_purchase_value(row):
 
 df["total_purchase_value"] = df.apply(calculate_total_purchase_value, axis=1)
 
+# Drop internal helper column if present
+if "_orphan_purchase_value" in df.columns:
+    df.drop(columns=["_orphan_purchase_value"], inplace=True)
+
 def calculate_roas(row):
     spend = safe_float(row.get("spend", 0))
     pv    = safe_float(row.get("total_purchase_value", 0))
     return pv / spend if spend > 0 and pv > 0 else 0
 
 df["calculated_roas"] = df.apply(calculate_roas, axis=1)
+
+# Flag orphan rows for transparency in reporting
+df["is_orphan_row"] = (
+    df["spend"].apply(safe_float).eq(0) &
+    df["impressions"].apply(lambda x: safe_float(x) if pd.notna(x) else 0).eq(0) &
+    df["total_purchase_value"].gt(0)
+).astype(int)
 
 # ─────────────────────────────────────────────
 # DATA QUALITY CHECKS
@@ -367,6 +544,12 @@ print(f"\n💰 Purchase Value:")
 print(f"   Rows with value : {(df['total_purchase_value'] > 0).sum()}")
 print(f"   Total           : ₹{df['total_purchase_value'].sum():.2f}")
 
+orphan_pv = df[df["is_orphan_row"] == 1]["total_purchase_value"].sum()
+orphan_count = df["is_orphan_row"].sum()
+print(f"\n🔍 Orphan Purchase Rows (zero spend/impressions but has purchase value):")
+print(f"   Orphan rows     : {orphan_count}")
+print(f"   Orphan PV total : ₹{orphan_pv:.2f}")
+
 print(f"\n📈 ROAS:")
 roas_df = df[df["calculated_roas"] > 0]
 if not roas_df.empty:
@@ -379,10 +562,10 @@ else:
 print(f"\n💵 Spend:")
 print(f"   Total : ₹{df['spend'].astype(float).sum():.2f}")
 
-print(f"\n📋 Objectives: {df['objective'].unique().tolist()}")
+print(f"\n📋 Objectives: {df['objective'].dropna().unique().tolist()}")
 
 print(f"\n📊 Result Breakdown by Objective:")
-for obj in df["objective"].unique():
+for obj in df["objective"].dropna().unique():
     obj_df     = df[df["objective"] == obj]
     result_sum = obj_df["result"].astype(float).sum()
     print(f"   {obj}: {result_sum:.0f} results across {len(obj_df)} rows")
@@ -392,7 +575,7 @@ top = (
     df[df["result"].astype(float) > 0]
     .assign(result_num=lambda x: x["result"].astype(float))
     .nlargest(10, "result_num")
-    [["ad_name", "campaign_name", "result", "result_value", "cost_per_result_value", "spend", "date_start"]]  # Added result_value
+    [["ad_name", "campaign_name", "result", "result_value", "cost_per_result_value", "spend", "date_start"]]
 )
 print(top.to_string(index=False))
 
@@ -446,3 +629,4 @@ print(f"   'result_value'          → value (e.g., revenue) of the results, now
 print(f"   'cost_per_result_value' → matches Ads Manager Cost per Result column")
 print(f"   'total_purchase_value'  → sum of all pixel and catalog purchase values")
 print(f"   'calculated_roas'       → total_purchase_value / spend")
+print(f"   'is_orphan_row'         → 1 if row has purchase value but zero spend/impressions (inactive campaign day)")
