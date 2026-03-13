@@ -26,21 +26,3 @@ jobs:
           ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
           NEON_CONNECTION_STRING: ${{ secrets.NEON_CONNECTION_STRING }}
         run: python meta_data_full.py
-
-      - name: Wait 5 minutes (rate limit buffer)
-        run: sleep 300
-
-      - name: Run meta_age.py
-        env:
-          ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
-          NEON_CONNECTION_STRING: ${{ secrets.NEON_CONNECTION_STRING }}
-        run: python meta_age.py
-
-      - name: Wait 5 minutes (rate limit buffer)
-        run: sleep 300
-
-      - name: Run meta_region.py
-        env:
-          ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
-          NEON_CONNECTION_STRING: ${{ secrets.NEON_CONNECTION_STRING }}
-        run: python meta_region.py
