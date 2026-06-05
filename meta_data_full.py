@@ -277,6 +277,35 @@ if not all_data:
     print("❌ No data returned. Exiting.")
     exit()
 
+# ─── TEMPORARY VIDEO DEBUG ───────────────────────────────────────
+print("\n🔍 VIDEO DEBUG — checking raw API response")
+
+video_fields_to_check = [
+    "video_play_actions",
+    "video_p25_watched_actions",
+    "video_p50_watched_actions",
+    "video_p75_watched_actions",
+    "video_p100_watched_actions",
+    "video_thruplay_watched_actions",
+    "video_avg_time_watched_actions",
+    "video_continuous_2_sec_watched_actions",
+]
+
+# Check first 5 rows
+for i, row in enumerate(all_data[:5]):
+    print(f"\n  Row {i} | ad_id: {row.get('ad_id')} | date: {row.get('date_start')}")
+    for f in video_fields_to_check:
+        val = row.get(f)
+        print(f"    {f}: {val}")
+
+# Count how many rows have ANY video data at all
+rows_with_video = sum(
+    1 for row in all_data
+    if any(row.get(f) for f in video_fields_to_check)
+)
+print(f"\n  Rows with at least one video field present: {rows_with_video} / {len(all_data)}")
+# ─────────────────────────────────────────────────────────────────
+
 
 # ─────────────────────────────────────────────
 # FLATTEN
