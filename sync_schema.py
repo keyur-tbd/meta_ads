@@ -126,6 +126,18 @@ def sync_all_schemas(neon_connection_string):
         'cost_per_onsite_conversion_messaging_conversation_started_7d',
         'cost_per_onsite_conversion_messaging_conversation_replied_7d',
         'cost_per_onsite_conversion_messaging_user_depth_2_message_send',
+
+        # Video metrics
+        'video_plays',
+        'video_views_p25',
+        'video_views_p50',
+        'video_views_p75',
+        'video_views_p100',
+        'video_thruplay_views',
+        'video_avg_watch_time_sec',
+        'video_2sec_continuous',
+        'video_hook_rate_pct',
+        'video_completion_rate_pct',
         
         # Demographic breakdowns (for age/gender table)
         'age', 'gender',
