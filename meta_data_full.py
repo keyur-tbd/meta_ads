@@ -306,6 +306,29 @@ rows_with_video = sum(
 print(f"\n  Rows with at least one video field present: {rows_with_video} / {len(all_data)}")
 # ─────────────────────────────────────────────────────────────────
 
+# ─── TEMPORARY VIDEO DEBUG v2 ────────────────────────────────────
+print("\n🔍 Finding a row WITH video data...")
+
+video_fields_to_check = [
+    "video_play_actions",
+    "video_p25_watched_actions",
+    "video_p50_watched_actions",
+    "video_p75_watched_actions",
+    "video_p100_watched_actions",
+    "video_thruplay_watched_actions",
+    "video_avg_time_watched_actions",
+    "video_continuous_2_sec_watched_actions",
+]
+
+for i, row in enumerate(all_data):
+    if any(row.get(f) for f in video_fields_to_check):
+        print(f"\n  First video row found at index {i}")
+        print(f"  ad_id: {row.get('ad_id')} | date: {row.get('date_start')}")
+        for f in video_fields_to_check:
+            print(f"    {f}: {row.get(f)}")
+        break
+# ─────────────────────────────────────────────────────────────────
+
 
 # ─────────────────────────────────────────────
 # FLATTEN
