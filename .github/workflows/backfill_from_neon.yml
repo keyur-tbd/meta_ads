@@ -1,0 +1,41 @@
+name: Backfill Meta Ads tables from Neon → Supabase
+
+on:
+  workflow_dispatch:
+    inputs:
+      tables:
+        description: "Comma separated tables to copy"
+        required: false
+        default: "meta_ads_summary,meta_ads_age_gender,meta_ads_region"
+      overwrite:
+        description: "Let Neon rows overwrite rows already in Supabase (true/false)"
+        required: false
+        default: "false"
+
+jobs:
+  backfill:
+    name: Copy Neon tables into Supabase
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Copy tables
+        env:
+          NEON_DSN:        ${{ secrets.NEON_CONNECTION_STRING }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          TABLES:          ${{ github.event.inputs.tables }}
+          OVERWRITE:       ${{ github.event.inputs.overwrite == 'true' && '1' || '0' }}
+          SYNC_MODULE:     meta_insights_sync
+        run: python neon_to_supabase.py
