@@ -1,28 +1,55 @@
-name: Meta Ads → Neon Daily Sync
+name: Meta Ads → Supabase Daily Sync
 
 on:
   schedule:
-    - cron: '56 3 * * *'  # Runs daily at 3:00 AM UTC
-  workflow_dispatch:       # Allows manual trigger from GitHub UI
+    - cron: '56 3 * * *'   # Daily at 03:56 UTC (09:26 IST)
+  workflow_dispatch:       # Manual run; fill start/end to backfill a range
+    inputs:
+      start_date:
+        description: "Backfill start (YYYY-MM-DD). Leave empty for the normal lookback run."
+        required: false
+        default: ""
+      end_date:
+        description: "Backfill end (YYYY-MM-DD). Defaults to today."
+        required: false
+        default: ""
+      breakdowns:
+        description: "Which tables to sync"
+        required: false
+        default: "none,age_gender,region"
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      ACCESS_TOKEN:    ${{ secrets.META_ACCESS_TOKEN }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      START_DATE:      ${{ github.event.inputs.start_date }}
+      END_DATE:        ${{ github.event.inputs.end_date }}
+      BREAKDOWNS:      ${{ github.event.inputs.breakdowns || 'none,age_gender,region' }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
       - name: Install dependencies
-        run: pip install requests pandas sqlalchemy psycopg2-binary openpyxl
+        run: pip install -r requirements.txt
 
-      - name: Run meta_data_full.py
-        env:
-          ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
-          NEON_CONNECTION_STRING: ${{ secrets.NEON_CONNECTION_STRING }}
-        run: python meta_data_full.py
+      - name: Ad-level summary (meta_ads_summary)
+        if: contains(env.BREAKDOWNS, 'none')
+        run: python meta_insights_sync.py --breakdown none
+
+      - name: Age & gender breakdown (meta_ads_age_gender)
+        if: always() && contains(env.BREAKDOWNS, 'age_gender')
+        run: python meta_insights_sync.py --breakdown age_gender
+
+      - name: Region breakdown (meta_ads_region)
+        if: always() && contains(env.BREAKDOWNS, 'region')
+        run: python meta_insights_sync.py --breakdown region
