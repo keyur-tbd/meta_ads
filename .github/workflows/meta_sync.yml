@@ -25,6 +25,10 @@ jobs:
     env:
       ACCESS_TOKEN:    ${{ secrets.META_ACCESS_TOKEN }}
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
       START_DATE:      ${{ github.event.inputs.start_date }}
       END_DATE:        ${{ github.event.inputs.end_date }}
       BREAKDOWNS:      ${{ github.event.inputs.breakdowns || 'none,age_gender,region' }}

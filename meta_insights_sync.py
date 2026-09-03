@@ -42,6 +42,7 @@ import requests
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
+from etl_alerts import guard
 
 try:
     from dotenv import load_dotenv
@@ -574,6 +575,10 @@ def main():
 
     if not ACCESS_TOKEN:
         raise SystemExit("ACCESS_TOKEN is not set")
+
+    # Shared disk guard: refuse to write if this pipeline is over its budget,
+    # or the volume is full. Emails on warn/stop. See etl_alerts.py.
+    guard("marketplace")
 
     start, end = get_date_range()
     log.info("=" * 60)
