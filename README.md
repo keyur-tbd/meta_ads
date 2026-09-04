@@ -78,3 +78,43 @@ Two behaviours worth knowing:
 
 Full documentation, including how the budgets were sized:
 https://github.com/keyur-tbd/bc-supabase-sync#disk-alerts-and-auto-budgeting---start-here-if-you-got-an-email
+
+## Birbal reads these tables (shared across every pipeline)
+
+Since 2026-09-03 the Supabase project this writes to also backs **Birbal**
+(`birbal-tbdai/birbal-mission-control`), the app the business asks questions in
+plain language. Birbal never reads `public` directly: it reads one `select *`
+view per table in a separate `warehouse` schema, plus a dictionary row per table
+that tells it what the columns mean. Two consequences for this repo.
+
+**A new table, or a new column, is invisible to Birbal until somebody exposes
+it.** A view freezes its column list at CREATE time, and the exposure list is an
+array inside a function - so nothing errors anywhere. The table simply does not
+exist as far as the business is concerned, and an answer quietly leaves the new
+column out. After applying the DDL this repo prints, run as `postgres`:
+
+```sql
+select app.sync_warehouse_views();   -- mirror new tables and columns
+select app.sync_role_grants();       -- re-grant: the mirror drops grants
+```
+
+and add or update that table's row in `warehouse.warehouse_meta`. A column
+nobody described there is a column Birbal will not use correctly.
+
+**Never DROP or rename a table this pipeline owns.** A `warehouse` view depends
+on it, so a plain `DROP` fails and `DROP ... CASCADE` deletes Birbal's view
+without a word - that is how the BC sync went red on 2026-09-04. Add columns;
+never replace tables. The writes themselves are safe: the
+`delete window; insert` pair runs in one transaction, so a reader never sees
+the gap.
+
+**This sync applies its own DDL**: `ensure_columns()` runs
+`alter table ... add column if not exists` whenever Meta returns a field it has
+not seen, so columns appear in `public` unattended and stay invisible to Birbal
+until the mirror above is rebuilt. Check for drift after any Meta API change.
+
+Exposed today: `meta_ads_summary`, `meta_ads_age_gender` and `meta_ads_region` -
+all three this sync writes.
+
+Full contract, and the checks to run after a schema change:
+https://github.com/keyur-tbd/bc-supabase-sync#who-reads-this-database-birbal
