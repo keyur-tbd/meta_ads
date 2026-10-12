@@ -22,6 +22,12 @@ Column names are unchanged from the old Neon tables (flattened `actions`, `_valu
 
 Optional env: `AD_ACCOUNT_IDS` (comma separated, overrides the list in the script), `META_API_VERSION` (default `v21.0`), `LOOKBACK_DAYS` (default 10), `CHUNK_DAYS` (default 31).
 
+## Purchase value
+
+`total_purchase_value` (and `purchase_roas_primary`, hence `calculated_roas`) is chosen per row. On the Collaborative Ads accounts (Blinkit, Zepto, Instamart, the catalog test account; `CATALOG_SEGMENT_ACCOUNTS`, overridable by env) it is the catalog-segment purchase value (`omni_purchase_catalog_value`, falling back to `purchase_catalog_value`) and the catalog-segment ROAS -- what Ads Manager shows as "Catalog segment purchases" for these accounts. The plain `omni_purchase_value` / pixel / onsite values that occasionally land on those accounts come from another pixel and are ignored; until 2026-10-12 they were preferred, which wiped out the purchase value on any ad-day that had one (history recomputed in place that day). Other accounts keep the old order: omni purchase, pixel purchase, onsite web purchase, catalog value, purchase.
+
+The `region` breakdown gets no catalog-segment values from the API, so `meta_ads_region.total_purchase_value` is zero on the Collaborative Ads accounts; use `meta_ads_summary` or `meta_ads_age_gender` for purchase value.
+
 ## Runs
 
 * **Scheduled**: daily at 03:56 UTC; re-syncs the last 10 days up to today for all three tables, so 7-day-click attribution catches up.

@@ -70,6 +70,20 @@ DEFAULT_ACCOUNTS = [
     "act_1447779473228664",
     "act_2073146216601611",
 ]
+# Collaborative Ads accounts (Blinkit, Zepto, Instamart, and the Apr-May 2026 catalog test).
+# The retailer shares its pixel as a catalog segment, so an ad's purchases on these accounts are
+# the catalog-segment ones (Ads Manager's "Catalog segment purchases" / "... purchase ROAS", and
+# the Results column). The plain omni_purchase / pixel actions that occasionally appear on them
+# are a separate stream from another pixel; preferring those hid the real purchase value on any
+# day one landed (found 2026-10-12: 25-27 Sep 2026 ROAS collapsed on the Blinkit chips campaign).
+CATALOG_SEGMENT_ACCOUNTS = {
+    a.strip() if a.strip().startswith("act_") else f"act_{a.strip()}"
+    for a in os.getenv(
+        "CATALOG_SEGMENT_ACCOUNTS",
+        "act_2111571239641157,act_935022987639527,act_1447779473228664,act_2073146216601611",
+    ).split(",")
+    if a.strip()
+}
 AD_ACCOUNT_IDS = [
     a.strip() if a.strip().startswith("act_") else f"act_{a.strip()}"
     for a in os.getenv("AD_ACCOUNT_IDS", ",".join(DEFAULT_ACCOUNTS)).split(",")
@@ -356,6 +370,9 @@ def flatten(row):
             if safe_float(row.get(preferred, 0)) > 0:
                 row["purchase_roas_primary"] = safe_float(row[preferred])
                 break
+    if row.get("account_id") in CATALOG_SEGMENT_ACCOUNTS:
+        # native ROAS on a Collaborative Ads account is the catalog-segment one
+        row["purchase_roas_primary"] = safe_float(row.get("catalog_segment_value_omni_purchase_roas", 0))
 
     for col, field in VIDEO_FIELDS.items():
         row[col] = sum_entries(row.get(field))
@@ -369,6 +386,13 @@ def flatten(row):
 
 
 def primary_purchase_value(row):
+    if row.get("account_id") in CATALOG_SEGMENT_ACCOUNTS:
+        # Collaborative Ads: the catalog segment is the purchase, nothing else counts
+        for col in ("omni_purchase_catalog_value", "purchase_catalog_value"):
+            v = safe_float(row.get(col, 0))
+            if v > 0:
+                return v
+        return 0.0
     for col in ("omni_purchase_value", "offsite_conversion_fb_pixel_purchase_value",
                 "onsite_web_purchase_value", "omni_purchase_catalog_value"):
         v = safe_float(row.get(col, 0))
