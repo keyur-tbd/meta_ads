@@ -47,11 +47,13 @@ THUMB_PX   = int(os.getenv("THUMB_PX", "320"))
 THUMB_DAYS = int(os.getenv("THUMB_DAYS", "180"))
 GRAPH      = f"https://graph.facebook.com/{API_VERSION}"
 
-# Every effective_status Meta has. Without the filter the edges leave out archived
-# and deleted objects, and the ads that ran last quarter are exactly those.
-ALL_STATUSES = ["ACTIVE", "PAUSED", "DELETED", "PENDING_REVIEW", "DISAPPROVED", "PREAPPROVED",
-                "PENDING_BILLING_INFO", "CAMPAIGN_PAUSED", "ARCHIVED", "ADSET_PAUSED",
-                "IN_PROCESS", "WITH_ISSUES"]
+# Every effective_status each level accepts (a value a level does not know is an
+# "Invalid parameter"). Without the filter the edges leave out archived and deleted
+# objects, and the ads that ran last quarter are exactly those.
+CAMPAIGN_STATUSES = ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED", "IN_PROCESS", "WITH_ISSUES"]
+ADSET_STATUSES    = CAMPAIGN_STATUSES + ["CAMPAIGN_PAUSED"]
+AD_STATUSES       = ADSET_STATUSES + ["ADSET_PAUSED", "PENDING_REVIEW", "DISAPPROVED", "PREAPPROVED",
+                                      "PENDING_BILLING_INFO"]
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta_ads_entities (
@@ -106,19 +108,18 @@ def paged(path, params):
 
 
 def fetch_entities(account):
-    status_filter = json.dumps(ALL_STATUSES)
     rows = []
     for c in paged(f"{account}/campaigns", {"fields": "id,name,effective_status,configured_status,updated_time",
-                                            "effective_status": status_filter}):
+                                            "effective_status": json.dumps(CAMPAIGN_STATUSES)}):
         rows.append(("campaign", c["id"], account, c.get("name"), c["id"], None,
                      c.get("effective_status"), c.get("configured_status"), None, None, c.get("updated_time")))
     for s in paged(f"{account}/adsets", {"fields": "id,name,campaign_id,effective_status,configured_status,updated_time",
-                                         "effective_status": status_filter}):
+                                         "effective_status": json.dumps(ADSET_STATUSES)}):
         rows.append(("adset", s["id"], account, s.get("name"), s.get("campaign_id"), s["id"],
                      s.get("effective_status"), s.get("configured_status"), None, None, s.get("updated_time")))
     for a in paged(f"{account}/ads", {"fields": "id,name,campaign_id,adset_id,effective_status,configured_status,"
                                                 "updated_time,preview_shareable_link,creative{id}",
-                                      "effective_status": status_filter}):
+                                      "effective_status": json.dumps(AD_STATUSES)}):
         rows.append(("ad", a["id"], account, a.get("name"), a.get("campaign_id"), a.get("adset_id"),
                      a.get("effective_status"), a.get("configured_status"),
                      (a.get("creative") or {}).get("id"), a.get("preview_shareable_link"), a.get("updated_time")))
