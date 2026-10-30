@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS meta_ads_entities (
     synced_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (level, id)
 );
+-- Meta leaves effective_status ACTIVE after a campaign's stop_time / an ad set's
+-- end_time has passed (Ads Manager shows "Completed"), so the end is kept to tell them apart.
+ALTER TABLE meta_ads_entities ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS meta_ads_entities_creative_idx ON meta_ads_entities (creative_id);
 
 CREATE TABLE IF NOT EXISTS meta_ads_creatives (
@@ -111,20 +114,23 @@ def paged(path, params):
 
 def fetch_entities(account):
     rows = []
-    for c in paged(f"{account}/campaigns", {"fields": "id,name,effective_status,configured_status,updated_time",
+    for c in paged(f"{account}/campaigns", {"fields": "id,name,effective_status,configured_status,updated_time,stop_time",
                                             "effective_status": json.dumps(CAMPAIGN_STATUSES)}):
         rows.append(("campaign", c["id"], account, c.get("name"), c["id"], None,
-                     c.get("effective_status"), c.get("configured_status"), None, None, c.get("updated_time")))
-    for s in paged(f"{account}/adsets", {"fields": "id,name,campaign_id,effective_status,configured_status,updated_time",
+                     c.get("effective_status"), c.get("configured_status"), None, None, c.get("updated_time"),
+                     c.get("stop_time")))
+    for s in paged(f"{account}/adsets", {"fields": "id,name,campaign_id,effective_status,configured_status,updated_time,end_time",
                                          "effective_status": json.dumps(ADSET_STATUSES)}):
         rows.append(("adset", s["id"], account, s.get("name"), s.get("campaign_id"), s["id"],
-                     s.get("effective_status"), s.get("configured_status"), None, None, s.get("updated_time")))
+                     s.get("effective_status"), s.get("configured_status"), None, None, s.get("updated_time"),
+                     s.get("end_time")))
     for a in paged(f"{account}/ads", {"fields": "id,name,campaign_id,adset_id,effective_status,configured_status,"
                                                 "updated_time,preview_shareable_link,creative{id}",
                                       "effective_status": json.dumps(AD_STATUSES)}):
         rows.append(("ad", a["id"], account, a.get("name"), a.get("campaign_id"), a.get("adset_id"),
                      a.get("effective_status"), a.get("configured_status"),
-                     (a.get("creative") or {}).get("id"), a.get("preview_shareable_link"), a.get("updated_time")))
+                     (a.get("creative") or {}).get("id"), a.get("preview_shareable_link"), a.get("updated_time"),
+                     None))
     return rows
 
 
@@ -133,7 +139,7 @@ def upsert_entities(conn, rows):
         execute_values(cur, """
             INSERT INTO meta_ads_entities
                 (level, id, account_id, name, campaign_id, adset_id, effective_status,
-                 configured_status, creative_id, preview_url, updated_time)
+                 configured_status, creative_id, preview_url, updated_time, end_time)
             VALUES %s
             ON CONFLICT (level, id) DO UPDATE SET
                 account_id = EXCLUDED.account_id, name = EXCLUDED.name,
@@ -141,7 +147,7 @@ def upsert_entities(conn, rows):
                 effective_status = EXCLUDED.effective_status,
                 configured_status = EXCLUDED.configured_status,
                 creative_id = EXCLUDED.creative_id, preview_url = EXCLUDED.preview_url,
-                updated_time = EXCLUDED.updated_time, synced_at = NOW()
+                updated_time = EXCLUDED.updated_time, end_time = EXCLUDED.end_time, synced_at = NOW()
         """, rows, page_size=1000)
     conn.commit()
 
