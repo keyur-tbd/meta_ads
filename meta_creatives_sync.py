@@ -20,7 +20,8 @@ thumbnail is downloaded once. Thumbnails are fetched for creatives of ads that a
 live, or that delivered in the last THUMB_DAYS days.
 
 Status is a snapshot: rows are upserted every run and never deleted, so an object
-Meta no longer lists keeps its last known status (synced_at says when).
+Meta no longer lists (deleted ones cannot be listed) keeps its last known status;
+synced_at says when it was last seen.
 
 Environment: as meta_insights_sync.py, plus THUMB_PX (default 320) and
 THUMB_DAYS (default 180).
@@ -48,9 +49,10 @@ THUMB_DAYS = int(os.getenv("THUMB_DAYS", "180"))
 GRAPH      = f"https://graph.facebook.com/{API_VERSION}"
 
 # Every effective_status each level accepts (a value a level does not know is an
-# "Invalid parameter"). Without the filter the edges leave out archived and deleted
-# objects, and the ads that ran last quarter are exactly those.
-CAMPAIGN_STATUSES = ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED", "IN_PROCESS", "WITH_ISSUES"]
+# "Invalid parameter"). Without the filter the edges leave out archived objects, and the
+# ads that ran last quarter are exactly those. DELETED is refused ("Cannot request deleted
+# objects"), so a deleted object keeps the last status it was seen with, or none.
+CAMPAIGN_STATUSES = ["ACTIVE", "PAUSED", "ARCHIVED", "IN_PROCESS", "WITH_ISSUES"]
 ADSET_STATUSES    = CAMPAIGN_STATUSES + ["CAMPAIGN_PAUSED"]
 AD_STATUSES       = ADSET_STATUSES + ["ADSET_PAUSED", "PENDING_REVIEW", "DISAPPROVED", "PREAPPROVED",
                                       "PENDING_BILLING_INFO"]
