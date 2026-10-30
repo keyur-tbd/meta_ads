@@ -1,0 +1,30 @@
+name: Meta Ads status + creatives
+
+# Paused / active state and new creatives, between the daily insights runs, so an ad
+# switched off at noon reads Paused in Birbal the same afternoon. The daily sync runs
+# the same script as its last step.
+on:
+  schedule:
+    - cron: '41 */3 * * *'   # every 3 hours
+  workflow_dispatch:
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ACCESS_TOKEN:    ${{ secrets.META_ACCESS_TOKEN }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
+      TOKEN_ALERT_TO:  anup@thebakersdozen.in   # mailed when Meta rejects the token (comma separated)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python meta_creatives_sync.py

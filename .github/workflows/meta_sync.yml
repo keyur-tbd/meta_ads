@@ -58,3 +58,7 @@ jobs:
       - name: Region breakdown (meta_ads_region)
         if: always() && contains(env.BREAKDOWNS, 'region')
         run: python meta_insights_sync.py --breakdown region
+
+      - name: Status + creatives (meta_ads_entities, meta_ads_creatives)
+        if: always()
+        run: python meta_creatives_sync.py
