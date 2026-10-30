@@ -20,6 +20,8 @@ Column names are unchanged from the old Neon tables (flattened `actions`, `_valu
 | `META_ACCESS_TOKEN` | Marketing API token. Use a System User token so it does not expire every 60 days |
 | `NEON_CONNECTION_STRING` | only needed by the one-off Neon backfill |
 
+**Token alert.** Each step first asks Meta whether `META_ACCESS_TOKEN` still works. If Meta answers error 190 (expired, password changed, session reset by Facebook security) the step stops and mails `TOKEN_ALERT_TO` (set in the workflow; Performance Marketing, anup@thebakersdozen.in) with the fix. The cooldown is `etl_alert_config.cooldown_hours` under key `meta_ads_token` in `etl_alert_state`, so the three steps send one mail, and a good run re-arms it.
+
 Optional env: `AD_ACCOUNT_IDS` (comma separated, overrides the list in the script), `META_API_VERSION` (default `v21.0`), `LOOKBACK_DAYS` (default 10), `CHUNK_DAYS` (default 31).
 
 ## Purchase value

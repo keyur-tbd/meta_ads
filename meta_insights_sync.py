@@ -42,7 +42,7 @@ import requests
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
-from etl_alerts import guard
+from etl_alerts import guard, send_mail
 
 try:
     from dotenv import load_dotenv
@@ -195,7 +195,9 @@ def norm_col(name: str) -> str:
 # HTTP with retries
 # ─────────────────────────────────────────────
 class MetaAPIError(Exception):
-    pass
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
 
 
 RETRYABLE_CODES = {1, 2, 4, 17, 32, 613, 80000, 80004}  # transient / rate limit
@@ -223,13 +225,99 @@ def api_call(method, url, params=None, retries=6):
                     code = err.get("code")
                     last = f"API error {code}/{err.get('error_subcode')}: {err.get('message')}"
                     if code not in RETRYABLE_CODES and resp.status_code < 500:
-                        raise MetaAPIError(last)
+                        raise MetaAPIError(last, code)
             else:
                 last = f"empty response (HTTP {resp.status_code})"
         log.warning(f"    {last} - retry {attempt}/{retries} in {delay}s")
         time.sleep(delay)
         delay = min(delay * 2, 120)
     raise MetaAPIError(f"giving up: {last}")
+
+
+# ─────────────────────────────────────────────
+# TOKEN CHECK + ALERT
+# ─────────────────────────────────────────────
+# Code 190 is Meta's "this access token is no good": expired, password changed,
+# session reset by Facebook security (subcode 460, first seen 2026-10-28), app
+# removed. Nothing loads until someone mints a new token, so the person who
+# owns Performance Marketing is mailed. The three workflow steps all check, but
+# etl_should_alert's cooldown (etl_alert_config.cooldown_hours) sends one mail
+# per cooldown, and a good run records 'ok' so the next breakage mails at once.
+TOKEN_ALERT_KEY = "meta_ads_token"
+TOKEN_ALERT_TO  = [a.strip() for a in
+                   os.getenv("TOKEN_ALERT_TO", "anup@thebakersdozen.in").split(",") if a.strip()]
+SECRET_URL      = "https://github.com/keyur-tbd/meta_ads/settings/secrets/actions"
+
+
+def _token_alert_state(level, reason, body=None):
+    """Record the token state; mail TOKEN_ALERT_TO if level is 'stop' and the
+    cooldown allows. Never raises: the alert must not hide the real failure."""
+    try:
+        conn = connect_db()
+        try:
+            with conn.cursor() as cur:
+                sent = False
+                cur.execute("SELECT public.etl_should_alert(%s, %s)", (TOKEN_ALERT_KEY, level))
+                if cur.fetchone()[0] and body:
+                    sent = send_mail("[ACTION] Meta Ads token is invalid - Birbal Meta data has stopped",
+                                     body, TOKEN_ALERT_TO)
+                    log.info(f"Token alert {'sent to ' + ', '.join(TOKEN_ALERT_TO) if sent else 'NOT sent'}")
+                cur.execute("SELECT public.etl_record_alert(%s, %s, %s, %s)",
+                            (TOKEN_ALERT_KEY, level, reason, sent))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        log.exception("Could not record / send the Meta token alert")
+
+
+def _last_loaded_day():
+    try:
+        conn = connect_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT max(date_start) FROM public.meta_ads_summary")
+                return cur.fetchone()[0]
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+def check_token():
+    """Fail fast, and mail, if the token is rejected. Anything else (network,
+    Meta outage) is left to the real calls and their retries."""
+    try:
+        api_call("GET", f"https://graph.facebook.com/{API_VERSION}/me",
+                 params={"access_token": ACCESS_TOKEN, "fields": "id"}, retries=2)
+    except MetaAPIError as e:
+        if e.code != 190:
+            log.warning(f"Token pre-check inconclusive ({e}) - carrying on")
+            return
+        last = _last_loaded_day()
+        body = "\n".join([
+            "The Meta Ads sync could not log in to Meta, so no new Meta data is reaching",
+            "Supabase or Birbal (Performance Marketing / Ecom Spends boards).",
+            "",
+            f"Meta said:  {e}",
+            f"Last day loaded:  {last or 'unknown'}",
+            "",
+            "To fix it:",
+            "  1. Generate a new token in Meta Business Settings -> Users -> System users",
+            "     -> Generate new token, with the ads_read permission on these ad accounts:",
+            *[f"       {a}" for a in AD_ACCOUNT_IDS],
+            "     A System User token does not expire and survives password changes;",
+            "     a personal token breaks again on the next password change or after 60 days.",
+            f"  2. Save it as the GitHub secret META_ACCESS_TOKEN: {SECRET_URL}",
+            "     (no access? send the token to the data team over a private channel, not email).",
+            "  3. Nothing else is needed: the next daily run (09:26 IST) re-fetches the last",
+            f"     {LOOKBACK_DAYS} days, so the gap fills itself if it is shorter than that.",
+            "",
+            "You will get this mail once a day, with the daily run, until the token works again.",
+        ])
+        _token_alert_state("stop", str(e), body)
+        raise SystemExit(f"Meta rejected the access token: {e}")
+    _token_alert_state("ok", "token accepted")
 
 
 # ─────────────────────────────────────────────
@@ -599,6 +687,9 @@ def main():
 
     if not ACCESS_TOKEN:
         raise SystemExit("ACCESS_TOKEN is not set")
+
+    # Expired / invalidated token: mail Performance Marketing and stop.
+    check_token()
 
     # Shared disk guard: refuse to write if this pipeline is over its budget,
     # or the volume is full. Emails on warn/stop. See etl_alerts.py.
