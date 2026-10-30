@@ -24,7 +24,7 @@ Meta no longer lists (deleted ones cannot be listed) keeps its last known status
 synced_at says when it was last seen.
 
 Environment: as meta_insights_sync.py, plus THUMB_PX (default 320) and
-THUMB_DAYS (default 180).
+THUMB_DAYS (default 400).
 """
 
 import hashlib
@@ -45,7 +45,7 @@ from meta_insights_sync import (ACCESS_TOKEN, AD_ACCOUNT_IDS, API_VERSION, api_c
 log = logging.getLogger(__name__)
 
 THUMB_PX   = int(os.getenv("THUMB_PX", "320"))
-THUMB_DAYS = int(os.getenv("THUMB_DAYS", "180"))
+THUMB_DAYS = int(os.getenv("THUMB_DAYS", "400"))
 GRAPH      = f"https://graph.facebook.com/{API_VERSION}"
 
 # Every effective_status each level accepts (a value a level does not know is an
