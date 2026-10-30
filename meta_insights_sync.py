@@ -224,6 +224,8 @@ def api_call(method, url, params=None, retries=6):
                         return data
                     code = err.get("code")
                     last = f"API error {code}/{err.get('error_subcode')}: {err.get('message')}"
+                    if err.get("error_user_msg"):           # Meta's own explanation, when it gives one
+                        last += f" ({err.get('error_user_title') or 'detail'}: {err['error_user_msg']})"
                     if code not in RETRYABLE_CODES and resp.status_code < 500:
                         raise MetaAPIError(last, code)
             else:
