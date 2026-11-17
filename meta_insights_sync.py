@@ -43,6 +43,7 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 from etl_alerts import guard, send_mail
+from ddl_guard import ensure_ddl
 
 try:
     from dotenv import load_dotenv
@@ -566,18 +567,18 @@ def ensure_table(conn, table, key_cols):
     cols = BASE_COLUMNS + [c for c in key_cols if c not in BASE_COLUMNS]
     defs = ",\n    ".join(f'"{c}" {col_type(c)}' for c in cols)
     key  = ", ".join(f'"{c}"' for c in key_cols)
-    with conn.cursor() as cur:
-        cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS "{table}" (
+    # ADD COLUMN IF NOT EXISTS / CREATE INDEX IF NOT EXISTS lock the table even when they change nothing; queued
+    # behind a reader the sync hit statement_timeout here (16 Nov 2026). ensure_ddl skips what is already in place.
+    stmts = [f'''CREATE TABLE IF NOT EXISTS "{table}" (
                 {defs},
                 synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-        """)
-        cur.execute(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()')
-        for c in key_cols:
-            cur.execute(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS "{c}" {col_type(c)}')
-        cur.execute(f'CREATE UNIQUE INDEX IF NOT EXISTS "{table}_uniq" ON "{table}" ({key})')
-        cur.execute(f'CREATE INDEX IF NOT EXISTS "{table}_date_idx" ON "{table}" (date_start)')
+            )''',
+             f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()']
+    stmts += [f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS "{c}" {col_type(c)}' for c in key_cols]
+    stmts += [f'CREATE UNIQUE INDEX IF NOT EXISTS "{table}_uniq" ON "{table}" ({key})',
+              f'CREATE INDEX IF NOT EXISTS "{table}_date_idx" ON "{table}" (date_start)']
+    with conn.cursor() as cur:
+        ensure_ddl(cur, "".join(s + ";\n" for s in stmts))
     conn.commit()
 
 

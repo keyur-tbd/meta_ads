@@ -39,6 +39,7 @@ from PIL import Image
 from psycopg2.extras import execute_values
 
 from etl_alerts import guard
+from ddl_guard import ensure_ddl
 from meta_insights_sync import (ACCESS_TOKEN, AD_ACCOUNT_IDS, API_VERSION, api_call,
                                 check_token, connect_db)
 
@@ -244,7 +245,7 @@ def main():
 
     conn = connect_db()
     with conn.cursor() as cur:
-        cur.execute(SCHEMA_SQL)
+        ensure_ddl(cur, SCHEMA_SQL)   # skips no-op ALTER/RLS/INDEX: they lock the table even when nothing changes
     conn.commit()
 
     errors = []
